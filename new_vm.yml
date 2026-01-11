@@ -1,0 +1,25 @@
+---
+
+- hosts: all
+  become: true
+  tasks:
+
+  - name: apt update
+    apt:
+      update_cache: yes
+      force: yes
+      upgrade: 'yes'
+
+  - name: Install Net Tools
+    apt:
+     name: net-tools
+     state: latest
+
+  - name: Install Vim
+    apt:
+     name: vim
+     state: latest
+
+  - name: set timezone
+    shell: timedatectl set-timezone Europe/Stockholm
+
