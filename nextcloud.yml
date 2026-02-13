@@ -1,0 +1,154 @@
+---
+- name: Install Nextcloud on Ubuntu (No SSL)
+  hosts: all
+  become: yes
+
+  vars:
+    domain: cloud.local
+    db_name: nextcloud
+    db_user: joakim
+    db_password: JDFJJDRFvFMZwA6
+    admin_user: admin
+    admin_password: eLQjBKcjvoEb1Z8
+    nextcloud_version: "29.0.4"
+
+  tasks:
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        upgrade: dist
+
+    - name: Install required packages
+      apt:
+        name:
+          - apache2
+          - mariadb-server
+          - libapache2-mod-php
+          - php
+          - php-mysql
+          - php-gd
+          - php-xml
+          - php-mbstring
+          - php-curl
+          - php-zip
+          - php-intl
+          - php-bcmath
+          - php-gmp
+          - unzip
+          - wget
+          - ufw
+          - python3-pymysql
+        state: present
+
+    - name: Start and enable services
+      service:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - apache2
+        - mariadb
+
+    - name: Set MariaDB root password
+      mysql_user:
+        name: root
+        host_all: yes
+        password: "{{ db_password }}"
+        login_unix_socket: /run/mysqld/mysqld.sock
+      ignore_errors: yes
+
+    - name: Create Nextcloud database
+      mysql_db:
+        name: "{{ db_name }}"
+        state: present
+        login_user: root
+        login_password: "{{ db_password }}"
+
+    - name: Create Nextcloud DB user
+      mysql_user:
+        name: "{{ db_user }}"
+        password: "{{ db_password }}"
+        priv: "{{ db_name }}.*:ALL"
+        host: localhost
+        state: present
+        login_user: root
+        login_password: "{{ db_password }}"
+
+    - name: Download Nextcloud
+      get_url:
+        url: "https://download.nextcloud.com/server/releases/nextcloud-{{ nextcloud_version }}.zip"
+        dest: /tmp/nextcloud.zip
+
+    - name: Extract Nextcloud
+      unarchive:
+        src: /tmp/nextcloud.zip
+        dest: /var/www/
+        remote_src: yes
+
+    - name: Set permissions
+      file:
+        path: /var/www/nextcloud
+        owner: www-data
+        group: www-data
+        recurse: yes
+
+    - name: Configure Apache VirtualHost (HTTP only)
+      copy:
+        dest: /etc/apache2/sites-available/nextcloud.conf
+        content: |
+          <VirtualHost *:80>
+              ServerName {{ domain }}
+              DocumentRoot /var/www/nextcloud
+
+              <Directory /var/www/nextcloud/>
+                  Require all granted
+                  AllowOverride All
+                  Options FollowSymLinks MultiViews
+              </Directory>
+
+              ErrorLog ${APACHE_LOG_DIR}/nextcloud_error.log
+              CustomLog ${APACHE_LOG_DIR}/nextcloud_access.log combined
+          </VirtualHost>
+
+    - name: Enable Apache modules
+      command: a2enmod rewrite headers env dir mime
+      notify: Restart Apache
+
+    - name: Enable Nextcloud site
+      command: a2ensite nextcloud.conf
+      notify: Restart Apache
+
+    - name: Disable default site
+      command: a2dissite 000-default.conf
+      notify: Restart Apache
+
+    - name: Open firewall ports
+      ufw:
+        rule: allow
+        name: "{{ item }}"
+      loop:
+        - OpenSSH
+        - Apache
+
+    - name: Enable UFW
+      ufw:
+        state: enabled
+
+    - name: Run Nextcloud installer
+      command: >
+        sudo -u www-data php /var/www/nextcloud/occ maintenance:install
+        --database "mysql"
+        --database-name "{{ db_name }}"
+        --database-user "{{ db_user }}"
+        --database-pass "{{ db_password }}"
+        --admin-user "{{ admin_user }}"
+        --admin-pass "{{ admin_password }}"
+      args:
+        creates: /var/www/nextcloud/config/config.php
+
+  handlers:
+    - name: Restart Apache
+      service:
+        name: apache2
+        state: restarted
